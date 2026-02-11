@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from processor import process_excel
 
 import os
 import uuid
@@ -60,20 +61,16 @@ def start():
     report_file.save(report_path)
     add_log(task_id, "文件已保存到服务器临时目录")
 
-    # ====== 假处理：生成一个简单的结果文件（后续替换为你们真实逻辑）======
-    import pandas as pd
+    # ====== 真处理：调用你们的处理逻辑，生成结果文件 ======
     out_path = os.path.join(OUTPUT_DIR, f"{task_id}_最终结果.xlsx")
 
-    demo = pd.DataFrame([
-        ["A网格", 10, 3, "30%", 300, 120, "40%", 85, "某旗县", "产品1"],
-        ["B网格", 8, 5, "62.5%", 200, 160, "80%", 92, "某旗县", "产品2"],
-    ], columns=["单位名称","日目标","日发展","日发展完成率","月目标","月累计发展","月完成率","得分","旗县","产品"])
-
-    demo.to_excel(out_path, index=False)
-    add_log(task_id, "生成演示用 最终结果.xlsx 完成")
-
-    TASK_OUTPUT[task_id] = out_path
-    add_log(task_id, "处理结束，可以下载结果")
+    try:
+        add_log(task_id, "开始执行真实处理逻辑…")
+        process_excel(param_path, report_path, out_path)  # 关键：调用你写的 processor.py
+        add_log(task_id, "真实处理完成，已生成最终结果.xlsx")
+    except Exception as e:
+        add_log(task_id, f"处理失败：{type(e).__name__}: {e}")
+        return jsonify({"error": f"处理失败：{type(e).__name__}: {e}", "task_id": task_id}), 500
 
     return jsonify({"task_id": task_id})
 
