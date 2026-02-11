@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>三创演示：AI 映射处理数据</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>三创演示：AI 映射处理数据</h1>
+    <p class="muted">只用 PyCharm + Python 搭建的演示网页：上传参数表和报表，生成并下载“最终结果.xlsx”。</p>
+
+    <div class="card">
+      <h2>1) 上传文件</h2>
+      <div class="row">
+        <label>
+          参数表（Excel）
+          <input id="paramFile" type="file" accept=".xlsx,.xls"/>
+        </label>
+        <label>
+          报表（Excel）
+          <input id="reportFile" type="file" accept=".xlsx,.xls"/>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="runBtn">开始处理</button>
+        <a id="downloadLink" class="btn secondary disabled" href="javascript:void(0)">下载 最终结果.xlsx</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>2) 日志</h2>
+      <pre id="log" class="log">等待开始…</pre>
+    </div>
+  </div>
+
+<script>
+let currentTaskId = null;
+
+const paramFile = document.getElementById("paramFile");
+const reportFile = document.getElementById("reportFile");
+const runBtn = document.getElementById("runBtn");
+const logEl = document.getElementById("log");
+const downloadLink = document.getElementById("downloadLink");
+
+function setLog(text) {
+  logEl.textContent = text;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function refreshLog() {
+  if (!currentTaskId) return;
+  const r = await fetch(`/api/log/${currentTaskId}`);
+  const data = await r.json();
+  setLog((data.logs || []).join("\n") || "暂无日志");
+}
+
+runBtn.addEventListener("click", async () => {
+  if (!paramFile.files[0] || !reportFile.files[0]) {
+    alert("请先选择 参数表 和 报表 两个文件");
+    return;
+  }
+
+  runBtn.disabled = true;
+  downloadLink.classList.add("disabled");
+  downloadLink.href = "javascript:void(0)";
+  setLog("正在提交任务…");
+
+  const form = new FormData();
+  form.append("param_file", paramFile.files[0]);
+  form.append("report_file", reportFile.files[0]);
+
+  const resp = await fetch("/api/start", { method: "POST", body: form });
+  const data = await resp.json();
+
+  if (!resp.ok) {
+    setLog("出错：" + (data.error || "未知错误"));
+    runBtn.disabled = false;
+    return;
+  }
+
+  currentTaskId = data.task_id;
+
+  // 先拉一次日志
+  await refreshLog();
+
+  // 关键：使用后端返回的 download_url（不再自己拼接）
+  if (data.download_url) {
+    downloadLink.href = data.download_url;
+    downloadLink.classList.remove("disabled");
+  } else {
+    // 兜底：按 task_id 拼接
+    downloadLink.href = `/api/download/${currentTaskId}`;
+    downloadLink.classList.remove("disabled");
+  }
+
+  runBtn.disabled = false;
+});
+</script>
+</body>
+</html>
