@@ -9,7 +9,7 @@
 <body>
   <div class="container">
     <h1>三创演示：AI 映射处理数据</h1>
-    <p class="muted">只用 PyCharm + Python 搭建的演示网页：上传参数表和报表，生成并下载“最终结果.xlsx”。</p>
+    <p class="muted">上传参数表和报表，后台调用 AI 处理并生成结果文件。</p>
 
     <div class="card">
       <h2>1) 上传文件</h2>
@@ -38,6 +38,7 @@
 
 <script>
 let currentTaskId = null;
+let pollTimer = null;
 
 const paramFile = document.getElementById("paramFile");
 const reportFile = document.getElementById("reportFile");
@@ -50,11 +51,33 @@ function setLog(text) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-async function refreshLog() {
-  if (!currentTaskId) return;
-  const r = await fetch(`/api/log/${currentTaskId}`);
-  const data = await r.json();
-  setLog((data.logs || []).join("\n") || "暂无日志");
+async function fetchJson(url) {
+  const r = await fetch(url);
+  return await r.json();
+}
+
+async function poll(logUrl, statusUrl, downloadUrl) {
+  try {
+    const logData = await fetchJson(logUrl);
+    setLog((logData.logs || []).join("\n") || "暂无日志");
+
+    const st = await fetchJson(statusUrl);
+
+    if (st.state === "done") {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      downloadLink.href = downloadUrl;
+      downloadLink.classList.remove("disabled");
+      runBtn.disabled = false;
+    } else if (st.state === "error") {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      runBtn.disabled = false;
+      alert("处理失败：" + (st.error || "未知错误"));
+    }
+  } catch (e) {
+    // 忽略偶发网络波动，继续轮询
+  }
 }
 
 runBtn.addEventListener("click", async () => {
@@ -82,21 +105,11 @@ runBtn.addEventListener("click", async () => {
   }
 
   currentTaskId = data.task_id;
+  setLog("任务已创建，后台处理中…");
 
-  // 先拉一次日志
-  await refreshLog();
-
-  // 关键：使用后端返回的 download_url（不再自己拼接）
-  if (data.download_url) {
-    downloadLink.href = data.download_url;
-    downloadLink.classList.remove("disabled");
-  } else {
-    // 兜底：按 task_id 拼接
-    downloadLink.href = `/api/download/${currentTaskId}`;
-    downloadLink.classList.remove("disabled");
-  }
-
-  runBtn.disabled = false;
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => poll(data.log_url, data.status_url, data.download_url), 2000);
+  poll(data.log_url, data.status_url, data.download_url);
 });
 </script>
 </body>
