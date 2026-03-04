@@ -38,7 +38,9 @@
 
 <script>
 let currentTaskId = null;
-let pollTimer = null;
+let logTimer = null;
+let statusTimer = null;
+let lastLogText = "";
 
 const paramFile = document.getElementById("paramFile");
 const reportFile = document.getElementById("reportFile");
@@ -47,37 +49,69 @@ const logEl = document.getElementById("log");
 const downloadLink = document.getElementById("downloadLink");
 
 function setLog(text) {
+  if (text === lastLogText) return; // 避免重复刷新造成闪烁
+  lastLogText = text;
   logEl.textContent = text;
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-async function fetchJson(url) {
-  const r = await fetch(url);
+function disableDownload() {
+  downloadLink.classList.add("disabled");
+  downloadLink.href = "javascript:void(0)";
+  downloadLink.style.pointerEvents = "none";
+  downloadLink.style.opacity = "0.6";
+}
+
+function enableDownload(url) {
+  downloadLink.href = url;
+  downloadLink.classList.remove("disabled");
+  downloadLink.style.pointerEvents = "auto";
+  downloadLink.style.opacity = "1";
+}
+
+// ✅ 防缓存：cache:no-store + URL加时间戳
+async function fetchJsonNoCache(url) {
+  const u = new URL(url, window.location.origin);
+  u.searchParams.set("t", Date.now().toString());
+  const r = await fetch(u.toString(), { cache: "no-store" });
   return await r.json();
 }
 
-async function poll(logUrl, statusUrl, downloadUrl) {
+async function pollLog(logUrl) {
   try {
-    const logData = await fetchJson(logUrl);
-    setLog((logData.logs || []).join("\n") || "暂无日志");
+    const logData = await fetchJsonNoCache(logUrl);
+    const lines = (logData.logs || []);
+    setLog(lines.join("\n") || "暂无日志");
+  } catch (e) {
+    // 忽略偶发网络波动
+  }
+}
 
-    const st = await fetchJson(statusUrl);
+async function pollStatus(statusUrl, downloadUrl) {
+  try {
+    const st = await fetchJsonNoCache(statusUrl);
 
     if (st.state === "done") {
-      clearInterval(pollTimer);
-      pollTimer = null;
-      downloadLink.href = downloadUrl;
-      downloadLink.classList.remove("disabled");
+      stopPolling();
+      enableDownload(downloadUrl);
       runBtn.disabled = false;
+      // 给用户一个明确提示（可选）
+      setLog(lastLogText + "\n✅ 处理完成，可下载结果文件。");
     } else if (st.state === "error") {
-      clearInterval(pollTimer);
-      pollTimer = null;
+      stopPolling();
       runBtn.disabled = false;
       alert("处理失败：" + (st.error || "未知错误"));
     }
   } catch (e) {
-    // 忽略偶发网络波动，继续轮询
+    // 忽略偶发网络波动
   }
+}
+
+function stopPolling() {
+  if (logTimer) clearInterval(logTimer);
+  if (statusTimer) clearInterval(statusTimer);
+  logTimer = null;
+  statusTimer = null;
 }
 
 runBtn.addEventListener("click", async () => {
@@ -87,15 +121,15 @@ runBtn.addEventListener("click", async () => {
   }
 
   runBtn.disabled = true;
-  downloadLink.classList.add("disabled");
-  downloadLink.href = "javascript:void(0)";
+  disableDownload();
   setLog("正在提交任务…");
+  stopPolling();
 
   const form = new FormData();
   form.append("param_file", paramFile.files[0]);
   form.append("report_file", reportFile.files[0]);
 
-  const resp = await fetch("/api/start", { method: "POST", body: form });
+  const resp = await fetch("/api/start", { method: "POST", body: form, cache: "no-store" });
   const data = await resp.json();
 
   if (!resp.ok) {
@@ -105,11 +139,15 @@ runBtn.addEventListener("click", async () => {
   }
 
   currentTaskId = data.task_id;
-  setLog("任务已创建，后台处理中…");
+  setLog("任务已创建，后台处理中…（日志将持续刷新）");
 
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(() => poll(data.log_url, data.status_url, data.download_url), 2000);
-  poll(data.log_url, data.status_url, data.download_url);
+  // ✅ 分开轮询：日志更频繁，状态稍慢一些
+  logTimer = setInterval(() => pollLog(data.log_url), 1000);
+  statusTimer = setInterval(() => pollStatus(data.status_url, data.download_url), 1500);
+
+  // 立刻拉一次
+  pollLog(data.log_url);
+  pollStatus(data.status_url, data.download_url);
 });
 </script>
 </body>
